@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <title>Electron XPath Extractor</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 16px; }
+    input, button, textarea, select { margin: 4px 0; padding: 6px; width: 100%; box-sizing: border-box; }
+    .row { display:flex; gap:8px; }
+    .col { flex:1; }
+    #results { max-height: 280px; overflow:auto; white-space:pre-wrap; background:#f6f6f6; padding:8px; border:1px solid #ddd; }
+    label { font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h2>Electron XPath Extractor（学习用）</h2>
+
+  <label>1) 在下面输入你要打开的网页 URL，然后点击「打开网页」并在网页中手动登录：</label>
+  <div class="row">
+    <input id="url" placeholder="https://example.com/login" value="" />
+    <button id="openUrlBtn">打开网页</button>
+  </div>
+
+  <p><strong>说明：</strong>页面会在同一个窗口中加载。打开后按 F12 进行调试与手动登录。</p>
+
+  <hr />
+
+  <label>2) 登录后，在此输入 XPath（例如： //video 或 //a[contains(@href,'mp4') ] ）</label>
+  <input id="xpath" placeholder="//video | //a" />
+  <label>提取哪项？（留空则返回常用属性）</label>
+  <input id="attr" placeholder="例如：src 或 href" />
+
+  <div class="row">
+    <button id="runXPath">提取 XPath</button>
+    <button id="copyToClipboard">复制结果到剪贴板</button>
+  </div>
+
+  <h3>提取结果（JSON）</h3>
+  <div id="results">尚未执行</div>
+
+  <hr />
+  <label>3) 从提取结果中选择要下载的 URL（如果有）</label>
+  <textarea id="urlsToDownload" placeholder="每行一个 URL"></textarea>
+  <div class="row">
+    <button id="chooseFolder">选择保存文件夹</button>
+    <button id="downloadBtn">开始下载（需在 config.json 手动允许）</button>
+  </div>
+
+  <h3>下载日志</h3>
+  <div id="log">无</div>
+
+  <script>
+    const openUrlBtn = document.getElementById('openUrlBtn');
+    const runXPathBtn = document.getElementById('runXPath');
+    const xpathInput = document.getElementById('xpath');
+    const attrInput = document.getElementById('attr');
+    const resultsDiv = document.getElementById('results');
+    const urlsArea = document.getElementById('urlsToDownload');
+    const chooseFolderBtn = document.getElementById('chooseFolder');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const logDiv = document.getElementById('log');
+    const copyBtn = document.getElementById('copyToClipboard');
+
+    openUrlBtn.onclick = async () => {
+      const url = document.getElementById('url').value.trim();
+      if (!url) return alert('请输入 URL');
+      const r = await window.electronAPI.loadUrl(url);
+      if (!r.ok) alert('加载失败: ' + (r.error || '未知错误'));
+      else alert('页面已加载，请在页面内手动登录并按 F12 调试');
+    };
+
+    runXPathBtn.onclick = async () => {
+      const xpath = xpathInput.value.trim();
+      if (!xpath) return alert('请输入 XPath');
+      resultsDiv.textContent = '提取中...';
+      const attr = attrInput.value.trim() || null;
+      const r = await window.electronAPI.evaluateXPath(xpath, attr);
+      if (!r.ok) {
+        resultsDiv.textContent = '执行失败: ' + (r.error || '未知错误');
+        return;
+      }
+      resultsDiv.textContent = JSON.stringify(r, null, 2);
+      // 自动提取 href/src/extracted 字段到下载文本框（方便选择）
+      const lines = [];
+      for (const n of r.nodes || []) {
+        if (n.href) lines.push(n.href);
+        if (n.src) lines.push(n.src);
+        if (n.extracted) lines.push(n.extracted);
+      }
+      if (lines.length > 0) {
+        urlsArea.value = Array.from(new Set(lines)).join('\\n');
+      } else {
+        // 不自动填充的话保持当前文本
+      }
+    };
+
+    chooseFolderBtn.onclick = async () => {
+      const r = await window.electronAPI.chooseDownloadFolder();
+      if (r.ok) {
+        alert('已选择文件夹: ' + r.folder);
+      } else {
+        alert('未选择文件夹或出错');
+      }
+    };
+
+    downloadBtn.onclick = async () => {
+      const txt = urlsArea.value.trim();
+      if (!txt) return alert('请输入或粘贴要下载的 URL（每行一个）');
+
+      const urls = txt.split('\n').map(s => s.trim()).filter(Boolean);
+      logDiv.textContent = '开始下载...';
+
+      const r = await window.electronAPI.downloadUrls(urls);
+      if (!r.ok) {
+        logDiv.textContent = '下载失败: ' + (r.error || '未知错误');
+        return;
+      }
+
+      const okCount = r.results.filter(x => x.ok).length;
+      logDiv.textContent = '下载完成，成功: ' + okCount + '/' + r.results.length + '\n' +
+                          JSON.stringify(r.results, null, 2);
+    };
+  </script>
+</body>
+</html>

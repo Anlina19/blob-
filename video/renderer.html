@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Blob Stream Downloader</title>
+<style>
+body{font-family:sans-serif;margin:20px;}
+#log{background:#f8f8f8;border:1px solid #ccc;padding:8px;max-height:300px;overflow:auto;white-space:pre-wrap;}
+</style>
+</head>
+<body>
+<h2>Blob Downloader（流式+并发）</h2>
+<input id="xpath" value="//video" style="width:80%"/>
+<button id="choose">选择保存目录</button>
+<button id="start">开始检测</button>
+<button id="stop">停止检测</button>
+<div id="status"></div>
+<pre id="log"></pre>
+
+<script>
+const logDiv = document.getElementById('log');
+const xpathInput = document.getElementById('xpath');
+const statusDiv = document.getElementById('status');
+let worker, timer, known = new Set(), running=false;
+
+function log(msg){ logDiv.textContent += `\n${new Date().toLocaleTimeString()} | ${msg}`; logDiv.scrollTop = logDiv.scrollHeight; }
+
+document.getElementById('choose').onclick=async()=>{
+  const r=await window.electronAPI.chooseFolder();
+  if(r.ok) log('保存路径:'+r.folder);
+};
+
+document.getElementById('start').onclick=()=>{
+  if(running)return;
+  running=true;
+  statusDiv.textContent='运行中...';
+  startWorker();
+  check();
+  timer=setInterval(check,15000);
+};
+document.getElementById('stop').onclick=()=>{
+  running=false;
+  clearInterval(timer);
+  statusDiv.textContent='已停止';
+};
+
+function startWorker(){
+  worker=new Worker('blob-worker.js');
+  worker.onmessage=async(ev)=>{
+    const d=ev.data;
+    if(d.type==='start') log('开始下载:'+d.filename);
+    else if(d.type==='done') log(`✅ 已保存: ${d.filename}`);
+    else if(d.type==='error') log(`❌ ${d.error}`);
+    else if(d.type==='ipc'){
+      const { msgId, payloadType, payload }=d;
+      let resp;
+      try{
+        if(payloadType==='start') resp=await window.electronAPI.startSave(payload.filename);
+        else if(payloadType==='chunk') resp=await window.electronAPI.writeChunk(payload.id,payload.chunk);
+        else if(payloadType==='end') resp=await window.electronAPI.endSave(payload.id);
+      }catch(e){resp={ok:false,error:e.message}}
+      worker.postMessage({msgId,resp});
+    }
+  };
+}
+
+async function check(){
+  const xp=xpathInput.value.trim();
+  const r=await window.electronAPI.evaluateXPath(xp);
+  if(!r.ok){log('提取失败:'+r.error);return;}
+  for(const url of r.nodes){
+    if(!known.has(url)){
+      known.add(url);
+      worker.postMessage({type:'download',url});
+    }
+  }
+}
+</script>
+</body>
+</html>
